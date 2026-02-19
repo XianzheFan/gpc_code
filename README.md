@@ -1,0 +1,211 @@
+# Strengthening Generative Robot Policies through Predictive World Modeling — Official Code Release
+
+Official implementation of:
+
+> **Strengthening Generative Robot Policies through Predictive World Modeling**  
+> Han Qi, Haocheng Yin, Aris Zhu, Yilun Du, Heng Yang  
+> arXiv 2025  
+> Paper: https://arxiv.org/abs/2502.00622  
+
+---
+
+## Overview
+
+This repository provides the official implementation of the framework proposed in the paper:
+
+> We strengthen diffusion-based generative robot policies by integrating a predictive world model that enables long-horizon reasoning and improved robustness.
+
+The framework consists of two main components:
+
+1. **Diffusion-based Action Policy**  
+   Generates action sequences using a generative diffusion model.
+
+2. **Predictive World Model**  
+   Learns environment dynamics to evaluate and refine candidate action trajectories.
+
+At inference time, the world model enhances policy performance through trajectory prediction and ranking/optimization.
+
+---
+
+## Repository Structure
+
+```
+.
+├── diffusion_policy_training/        # Train diffusion-based action policy
+├── world_model_train_phase_one/      # World model single-step warmup training
+├── world_model_train_phase_two/      # World model multi-step training
+├── gpc_rank_evaluation/              # GPC-RANK evaluation
+├── gpc_opt_evaluation/               # GPC-OPT evaluation
+└── ...
+```
+
+---
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone <repo_url>
+cd <repo_name>
+```
+
+### 2. Install dependencies
+
+We recommend using a clean conda environment:
+
+```bash
+conda create -n gpc python=3.12
+conda activate gpc
+pip install -r requirements.txt
+```
+
+---
+
+## Checkpoints & Datasets
+
+- **Pretrained checkpoints:**  
+  `https://huggingface.co/han2019/gpc_checkpoints/tree/main`
+
+Please download the checkpoints under a folder named 'all_checkpoint' in the root folder.
+
+- **Diffusion policy training dataset:**  
+  `xxx`
+
+- **World model training dataset:**  
+  `xxx`
+
+Please download the datasets and place them in the root folder.
+
+---
+
+# Training
+
+There are **two independent modules** to train:
+
+---
+
+## 1️⃣ Train the Diffusion Action Policy
+
+Directory:
+
+```
+diffusion_policy_training/
+```
+
+Run:
+
+```bash
+python train_model.py
+```
+
+This trains the diffusion-based generative policy that produces candidate action sequences.
+
+---
+
+## 2️⃣ Train the Predictive World Model
+
+World model training is performed in **two stages**, as described in the paper.
+
+---
+
+### (a) Phase One — Single-Step Warmup Training
+
+Directory:
+
+```
+world_model_train_phase_one/
+```
+
+Run:
+
+```bash
+python train.py
+```
+
+This stage trains the world model for **single-step prediction**, which stabilizes early training and improves multi-step rollout performance.
+
+---
+
+### (b) Phase Two — Multi-Step Training
+
+Directory:
+
+```
+world_model_train_phase_two/
+```
+
+Run:
+
+```bash
+python train.py
+```
+
+This stage trains the model for **multi-step rollouts**, enabling long-horizon trajectory evaluation.
+
+---
+
+# Evaluation
+
+After training both the policy and world model, you can evaluate the integrated system.
+
+---
+
+## GPC-RANK (Trajectory Ranking)
+
+Directory:
+
+```
+gpc_rank_evaluation/
+```
+
+Run:
+
+```bash
+python gpc_rank_evaluation.py
+```
+
+This mode:
+- Samples candidate action sequences from the diffusion policy
+- Uses the predictive world model to simulate future states
+- Ranks trajectories
+- Executes the highest-scoring candidate
+
+---
+
+## GPC-OPT (Trajectory Optimization)
+
+Directory:
+
+```
+gpc_opt_evaluation/
+```
+
+Run:
+
+```bash
+python gpc_opt_evaluation.py
+```
+
+This mode:
+- Uses the world model to iteratively optimize action sequences
+- Improves performance through predictive refinement
+
+
+---
+
+# Citation
+
+If you find this work useful, please cite:
+
+```bibtex
+@article{qi2025strengthening,
+  title={Strengthening generative robot policies through predictive world modeling},
+  author={Qi, Han and Yin, Haocheng and Zhu, Aris and Du, Yilun and Yang, Heng},
+  journal={arXiv preprint arXiv:2502.00622},
+  year={2025}
+}
+```
+
+
+

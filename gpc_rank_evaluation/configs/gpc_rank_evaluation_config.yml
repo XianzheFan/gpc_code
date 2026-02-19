@@ -1,0 +1,13 @@
+num_diffusion_iters: 100
+pred_horizon: 16
+obs_horizon: 2
+action_horizon: 8
+resize_scale: 96
+wandb: false
+output_dir: gpc_rank_evaluation_output
+max_steps: 300
+
+policy_checkpoint: ../all_checkpoint/action_policy_checkpoint/checkpoint_epoch_300
+world_model_checkpoint: /home/kalman/Han/00_2026/02_17_2026_gpc_code_release/my_code/all_checkpoint/world_model_checkpoint/phase_two_checkpoint/denoiser.pth
+reward_predictor_xy_checkpoint: ../all_checkpoint/reward_checkpoint/reward_predictor_xy.pth
+reward_predictor_angle_checkpoint: ../all_checkpoint/reward_checkpoint/reward_predictor_angle.pth

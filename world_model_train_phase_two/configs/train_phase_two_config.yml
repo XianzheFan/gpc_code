@@ -1,0 +1,15 @@
+dataset_path_dir: ../world_model_data/dataset_domain/all_data
+models_save_dir: saved_checkpoint
+output_dir: saved_checkpoint
+
+# hyperparams
+num_epochs: 300
+num_train_demos: 500
+pred_horizon: 16
+obs_horizon: 2
+action_horizon: 8
+batch_size: 8
+resize_scale: 96
+wandb: true
+
+phase_one_checkpoint: ../all_checkpoint/world_model_checkpoint/phase_one_checkpoint/denoiser.pth
