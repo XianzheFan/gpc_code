@@ -6,8 +6,6 @@ from diffusers.training_utils import EMAModel
 from tqdm.auto import tqdm
 from skvideo.io import vwrite
 import os
-import argparse
-import json
 from utils import *
 from pusht_env import *
 from models import *

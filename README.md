@@ -25,18 +25,22 @@ The framework consists of two main components:
 
 At inference time, the world model enhances policy performance through trajectory prediction and ranking/optimization.
 
+We use push-T experiment as an example in code.
+
 ---
 
 ## Repository Structure
 
 ```
 .
-├── diffusion_policy_training/        # Train diffusion-based action policy
-├── world_model_train_phase_one/      # World model single-step warmup training
-├── world_model_train_phase_two/      # World model multi-step training
-├── gpc_rank_evaluation/              # GPC-RANK evaluation
-├── gpc_opt_evaluation/               # GPC-OPT evaluation
-└── ...
+├── all_checkpoint/                   # Pretrained checkpoints (policy + world model)
+├── diffusion_policy_data/            # Training data for diffusion action policy
+├── diffusion_policy_training/        # Training code for diffusion-based action policy
+├── gpc_opt_evaluation/               # Evaluation with GPC-OPT (trajectory optimization)
+├── gpc_rank_evaluation/              # Evaluation with GPC-RANK (trajectory ranking)
+├── world_model_data/                 # Training data for predictive world model
+├── world_model_train_phase_one/      # Phase I: single-step world model warmup training
+└── world_model_train_phase_two/      # Phase II: multi-step world model training
 ```
 
 ---
@@ -46,8 +50,8 @@ At inference time, the world model enhances policy performance through trajector
 ### 1. Clone the repository
 
 ```bash
-git clone <repo_url>
-cd <repo_name>
+git clone https://github.com/han20192019/gpc_code.git
+cd gpc_code
 ```
 
 ### 2. Install dependencies
@@ -55,9 +59,8 @@ cd <repo_name>
 We recommend using a clean conda environment:
 
 ```bash
-conda create -n gpc python=3.12
+conda env create -f environment.yml
 conda activate gpc
-pip install -r requirements.txt
 ```
 
 ---
@@ -70,10 +73,10 @@ pip install -r requirements.txt
 Please download the checkpoints under a folder named 'all_checkpoint' in the root folder.
 
 - **Diffusion policy training dataset:**  
-  `xxx`
+  `https://huggingface.co/datasets/han2019/gpc_pushT_data/tree/main/diffusion_policy_data`
 
 - **World model training dataset:**  
-  `xxx`
+  `https://huggingface.co/datasets/han2019/gpc_pushT_data/tree/main/world_model_data`
 
 Please download the datasets and place them in the root folder.
 

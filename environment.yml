@@ -1,0 +1,28 @@
+name: gpc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # core
+      - numpy
+      - pyyaml
+      - tqdm
+      - wandb
+      - torch
+      - torchvision
+      - diffusers
+      - zarr
+      - pillow
+      - gym
+      - pygame
+      - pymunk
+      - shapely
+      - opencv-python
+      - scikit-image
+      - scikit-video
+      - matplotlib
+      - argparse
+      - typing
+

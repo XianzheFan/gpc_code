@@ -9,7 +9,6 @@ import argparse
 import wandb
 import os
 import yaml
-import shutil
 
 # other files
 from utils import *
