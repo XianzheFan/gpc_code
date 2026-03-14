@@ -1,9 +1,13 @@
-# Strengthening Generative Robot Policies through Predictive World Modeling — Official Code Release
+# Inference-Time Enhancement of Generative Robot Policies via Predictive World Modeling — Official Code Release
+
+*Formerly titled:* **Strengthening Generative Robot Policies through Predictive World Modeling**
 
 Official implementation of:
 
-> **Strengthening Generative Robot Policies through Predictive World Modeling**  
+> **Inference-Time Enhancement of Generative Robot Policies via Predictive World Modeling**  
+> *(formerly titled: Strengthening Generative Robot Policies through Predictive World Modeling)*  
 > Han Qi, Haocheng Yin, Aris Zhu, Yilun Du, Heng Yang  
+> Accepted to IEEE Robotics and Automation Letters (RA-L)  
 > arXiv 2025  
 > Paper: https://arxiv.org/abs/2502.00622  
 
@@ -202,12 +206,13 @@ This mode:
 If you find this work useful, please cite:
 
 ```bibtex
-@article{qi2025strengthening,
-  title={Strengthening generative robot policies through predictive world modeling},
-  author={Qi, Han and Yin, Haocheng and Zhu, Aris and Du, Yilun and Yang, Heng},
-  journal={arXiv preprint arXiv:2502.00622},
-  year={2025}
-}
+@article{qi25ral-gpc,
+    title={Inference-Time Enhancement of Generative Robot Policies via Predictive World Modeling},
+    note={Previously titled: Strengthening Generative Robot Policies through Predictive World Modeling},
+    author={Qi, Han and Yin, Haocheng and Zhu, Aris and Du, Yilun and Yang, Heng},
+    journal={IEEE Robotics and Automation Letters (RAL)},
+    year={2025}
+  }
 ```
 
 
