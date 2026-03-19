@@ -198,8 +198,24 @@ This mode:
 - Uses the world model to iteratively optimize action sequences
 - Improves performance through predictive refinement
 
+---
+
+## Community Implementations
+
+A Rust reimplementation of this work is available:
+
+- **gpc_rs (Rust workspace)**  
+  https://github.com/AbdelStark/gpc_rs  
+
+This project provides a Rust-based implementation of the GPC framework,
+including inference-time trajectory ranking and optimization.
+
+We thank the author for their contribution to making this work more accessible
+to the Rust and systems programming community.
 
 ---
+
+
 
 # Citation
 
