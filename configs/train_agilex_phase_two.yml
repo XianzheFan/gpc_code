@@ -1,0 +1,39 @@
+# =============================================================================
+# Phase 2: Multi-step finetuning on Agilex data
+# =============================================================================
+# Requires Phase 1 checkpoint.
+#   python train_world_model_agilex.py --config configs/train_agilex_phase_two.yml
+# =============================================================================
+
+dataset_path: data/agilex_fold_towel.zarr
+models_save_dir: checkpoints/agilex_wm_phase_two
+phase_one_checkpoint: checkpoints/agilex_wm_phase_one/epoch_300/denoiser.pth
+
+# Training
+num_epochs: 300
+batch_size: 8              # Smaller batch for longer sequences
+lr: 0.0001
+save_every: 10
+num_workers: 4
+
+# Sequence (longer horizon for multi-step rollout)
+pred_horizon: 16           # Phase 2: extended sequences
+obs_horizon: 2
+action_horizon: 8
+
+# World model architecture (must match Phase 1)
+action_dim: 14
+num_steps_conditioning: 4
+cond_channels: 256
+depths: [2, 2, 2, 2]
+channels: [96, 96, 96, 96]
+attn_depths: [0, 0, 1, 1]
+resize_scale: 96
+
+# Noise schedule
+sigma_data: 0.5
+sigma_offset_noise: 0.1
+noise_previous_obs: true
+
+wandb: false
+run_name: agilex_wm_phase2

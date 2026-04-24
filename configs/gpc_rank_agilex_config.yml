@@ -1,0 +1,35 @@
+# =============================================================================
+# GPC-RANK Agilex Configuration
+# =============================================================================
+# World model and reward predictor settings for agilex dual-arm robot.
+# Train the world model on agilex data (e.g. fold_towel_0109_agilex) before use.
+# =============================================================================
+
+# --- World model architecture ---
+action_dim: 14                  # agilex dual-arm: 6 joints + 1 gripper per arm
+num_steps_conditioning: 4       # number of previous frames for conditioning
+cond_channels: 256
+depths: [2, 2, 2, 2]
+channels: [96, 96, 96, 96]
+attn_depths: [0, 0, 1, 1]
+img_size: 96                    # world model operates at this resolution
+
+# --- World model training noise schedule ---
+sigma_data: 0.5
+sigma_offset_noise: 0.1
+noise_previous_obs: true
+sigma_loc: -1.2
+sigma_scale: 1.2
+sigma_min: 0.002
+sigma_max: 20
+
+# --- World model diffusion sampler ---
+num_steps_denoising: 3
+sampler_sigma_min: 0.002
+sampler_sigma_max: 5
+
+# --- Reward predictor ---
+reward_output_dim: 1            # scalar task-completion score (lower = better)
+
+# --- GPC-RANK inference ---
+spread_factor: 1.01             # spread candidates around mean (from original paper)
