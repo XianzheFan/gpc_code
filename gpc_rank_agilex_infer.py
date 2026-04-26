@@ -48,12 +48,37 @@ import rospy
 # Path setup: agilex robot utilities
 # ---------------------------------------------------------------------------
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(_THIS_DIR, '..', 'openpi', 'third_party', 'libero'))
+sys.path.append(os.path.join(_THIS_DIR, '..', 'openpi', 'agilex'))
 from clients import OpenpiClient
-from agilex_utils import (check_keyboard_input, get_config,
-                           handle_interactive_mode, process_action)
-from rosoperator import RosOperator, get_ros_observation
-from rotation import abs_6d_2_abs_euler, quat_2_euler
+from agilex_utils import (InferenceDataRecorder, check_keyboard_input,
+                           get_config, handle_interactive_mode, process_action)
+from ros_operator import (RosOperator, get_latest_ros_observation,
+                           get_ros_observation)
+from scipy.spatial.transform import Rotation as _R
+
+
+def quat_2_euler(quat):
+    return _R.from_quat([quat.x, quat.y, quat.z, quat.w]).as_euler('xyz')
+
+
+def _rot6d_to_matrix(r6):
+    a = np.asarray(r6[:3], dtype=np.float64)
+    b = np.asarray(r6[3:6], dtype=np.float64)
+    a_n = a / (np.linalg.norm(a) + 1e-8)
+    b_p = b - np.dot(a_n, b) * a_n
+    b_n = b_p / (np.linalg.norm(b_p) + 1e-8)
+    c_n = np.cross(a_n, b_n)
+    return np.stack([a_n, b_n, c_n], axis=-1)
+
+
+def abs_6d_2_abs_euler(act):
+    """Convert 20-d ee6d action [pos3, rot6, grip1] x 2  ->  14-d euler form."""
+    a = np.asarray(act, dtype=np.float64)
+    pos_l, rot6_l, grip_l = a[0:3], a[3:9], a[9:10]
+    pos_r, rot6_r, grip_r = a[10:13], a[13:19], a[19:20]
+    eul_l = _R.from_matrix(_rot6d_to_matrix(rot6_l)).as_euler('xyz')
+    eul_r = _R.from_matrix(_rot6d_to_matrix(rot6_r)).as_euler('xyz')
+    return np.concatenate([pos_l, eul_l, grip_l, pos_r, eul_r, grip_r])
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -101,20 +126,20 @@ class SelfAttention2d(nn.Module):
         super().__init__()
         self.n_head = max(1, in_channels // head_dim)
         self.norm = WMGroupNorm(in_channels)
-        self.qkv_proj = Conv1x1(in_channels, in_channels * 3)
-        self.out_proj = Conv1x1(in_channels, in_channels)
-        nn.init.zeros_(self.out_proj.weight)
-        nn.init.zeros_(self.out_proj.bias)
+        self.qkv = Conv1x1(in_channels, in_channels * 3)
+        self.out = Conv1x1(in_channels, in_channels)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
 
     def forward(self, x):
         n, c, h, w = x.shape
         x_normed = self.norm(x)
-        qkv = self.qkv_proj(x_normed).view(n, self.n_head * 3, c // self.n_head, h * w).transpose(2, 3).contiguous()
+        qkv = self.qkv(x_normed).view(n, self.n_head * 3, c // self.n_head, h * w).transpose(2, 3).contiguous()
         q, k, v = qkv.chunk(3, dim=1)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         att = F.softmax(att, dim=-1)
         y = (att @ v).transpose(2, 3).reshape(n, c, h, w)
-        return x + self.out_proj(y)
+        return x + self.out(y)
 
 
 class FourierFeatures(nn.Module):
@@ -152,17 +177,17 @@ class ResBlock(nn.Module):
     def __init__(self, in_ch, out_ch, cond_ch, attn):
         super().__init__()
         self.proj = Conv1x1(in_ch, out_ch) if in_ch != out_ch else nn.Identity()
-        self.norm1 = AdaGroupNorm(in_ch, cond_ch)
-        self.conv1 = Conv3x3(in_ch, out_ch)
-        self.norm2 = AdaGroupNorm(out_ch, cond_ch)
-        self.conv2 = Conv3x3(out_ch, out_ch)
+        self.n1 = AdaGroupNorm(in_ch, cond_ch)
+        self.c1 = Conv3x3(in_ch, out_ch)
+        self.n2 = AdaGroupNorm(out_ch, cond_ch)
+        self.c2 = Conv3x3(out_ch, out_ch)
         self.attn = SelfAttention2d(out_ch) if attn else nn.Identity()
-        nn.init.zeros_(self.conv2.weight)
+        nn.init.zeros_(self.c2.weight)
 
     def forward(self, x, cond):
         r = self.proj(x)
-        x = self.conv1(F.silu(self.norm1(x, cond)))
-        x = self.conv2(F.silu(self.norm2(x, cond)))
+        x = self.c1(F.silu(self.n1(x, cond)))
+        x = self.c2(F.silu(self.n2(x, cond)))
         return self.attn(x + r)
 
 
@@ -187,16 +212,16 @@ class UNet(nn.Module):
     def __init__(self, cond_ch, depths, channels, attn_depths):
         super().__init__()
         self._num_down = len(channels) - 1
-        d_blocks, u_blocks = [], []
+        db, ub = [], []
         for i, n in enumerate(depths):
             c1, c2 = channels[max(0, i - 1)], channels[i]
-            d_blocks.append(ResBlocks([c1] + [c2] * (n - 1), [c2] * n, cond_ch, attn_depths[i]))
-            u_blocks.append(ResBlocks([2 * c2] * n + [c1 + c2], [c2] * n + [c1], cond_ch, attn_depths[i]))
-        self.d_blocks = nn.ModuleList(d_blocks)
-        self.u_blocks = nn.ModuleList(reversed(u_blocks))
-        self.mid_blocks = ResBlocks([channels[-1]] * 2, [channels[-1]] * 2, cond_ch, True)
-        self.downsamples = nn.ModuleList([nn.Identity()] + [Downsample(c) for c in channels[:-1]])
-        self.upsamples = nn.ModuleList([nn.Identity()] + [Upsample(c) for c in reversed(channels[:-1])])
+            db.append(ResBlocks([c1] + [c2] * (n - 1), [c2] * n, cond_ch, attn_depths[i]))
+            ub.append(ResBlocks([2 * c2] * n + [c1 + c2], [c2] * n + [c1], cond_ch, attn_depths[i]))
+        self.db = nn.ModuleList(db)
+        self.ub = nn.ModuleList(reversed(ub))
+        self.mid = ResBlocks([channels[-1]] * 2, [channels[-1]] * 2, cond_ch, True)
+        self.ds = nn.ModuleList([nn.Identity()] + [Downsample(c) for c in channels[:-1]])
+        self.us = nn.ModuleList([nn.Identity()] + [Upsample(c) for c in reversed(channels[:-1])])
 
     def forward(self, x, cond):
         *_, h, w = x.size()
@@ -205,13 +230,13 @@ class UNet(nn.Module):
         pw = math.ceil(w / 2 ** n) * 2 ** n - w
         x = F.pad(x, (0, pw, 0, ph))
         d_outputs = []
-        for block, down in zip(self.d_blocks, self.downsamples):
+        for block, down in zip(self.db, self.ds):
             x_d = down(x)
             x, bo = block(x_d, cond)
             d_outputs.append((x_d, *bo))
-        x, _ = self.mid_blocks(x, cond)
+        x, _ = self.mid(x, cond)
         u_outputs = []
-        for block, up, skip in zip(self.u_blocks, self.upsamples, reversed(d_outputs)):
+        for block, up, skip in zip(self.ub, self.us, reversed(d_outputs)):
             x_u = up(x)
             x, bo = block(x_u, cond, skip[::-1])
             u_outputs.append((x_u, *bo))
@@ -569,23 +594,9 @@ def update_observation_window(args, config, ros_operator):
         (np.array(puppet_arm_left.position),
          np.array(puppet_arm_right.position)), axis=0)
 
-    left_pos = endpose_left.pose.position
-    left_rpy = quat_2_euler(endpose_left.pose.orientation)
-    endpose_left_arr = np.array([
-        left_pos.x, left_pos.y, left_pos.z,
-        left_rpy[0], left_rpy[1], left_rpy[2],
-        puppet_arm_left.position[-1],
-    ])
-
-    right_pos = endpose_right.pose.position
-    right_rpy = quat_2_euler(endpose_right.pose.orientation)
-    endpose_right_arr = np.array([
-        right_pos.x, right_pos.y, right_pos.z,
-        right_rpy[0], right_rpy[1], right_rpy[2],
-        puppet_arm_right.position[-1],
-    ])
-
-    endpose = np.concatenate((endpose_left_arr, endpose_right_arr), axis=0)
+    endpose = ros_operator.build_puppet_arm_pose(
+        endpose_left, endpose_right, puppet_arm_left, puppet_arm_right
+    )
 
     with observation_window_lock:
         observation_window.append({
@@ -597,6 +608,38 @@ def update_observation_window(args, config, ros_operator):
             },
             "endpose": endpose,
         })
+
+
+def get_rollout_observation(args, config, ros_operator):
+    """Fetch the latest ROS frame and pack it into the dict format expected
+    by InferenceDataRecorder / save_inference_data (qpos, eef_pose, images).
+    Uses the non-blocking latest-frame getter so it does not stall publishing.
+    """
+    observation = get_latest_ros_observation(args, ros_operator)
+    if observation is None:
+        return None
+
+    (img_front, img_left, img_right,
+     puppet_arm_left, puppet_arm_right,
+     endpose_left, endpose_right) = observation
+
+    qpos = np.concatenate(
+        (np.array(puppet_arm_left.position),
+         np.array(puppet_arm_right.position)), axis=0)
+
+    eef_pose = ros_operator.build_puppet_arm_pose(
+        endpose_left, endpose_right, puppet_arm_left, puppet_arm_right
+    )
+
+    return {
+        "qpos": qpos,
+        "eef_pose": eef_pose,
+        "images": {
+            config["camera_names"][0]: img_front,
+            config["camera_names"][1]: img_right,
+            config["camera_names"][2]: img_left,
+        },
+    }
 
 
 def _get_obs_and_state(args, config):
@@ -741,6 +784,7 @@ def model_inference(args, config, ros_operator):
     input("Press enter to start")
     task_time = time.time()
     ros_operator.puppet_arm_publish_continuous(left0, right0)
+    recorder = InferenceDataRecorder(args, config, shutdown_event=shutdown_event)
 
     try:
         while not rospy.is_shutdown():
@@ -754,6 +798,7 @@ def model_inference(args, config, ros_operator):
             chunk, _ = gpc_rank_inference(args, config, policy, ranker, ros_operator)
             idx = 0
             last_act = None
+            episode_closed = False
 
             while t < max_step and not rospy.is_shutdown() and not shutdown_event.is_set():
                 print(f"[Step {t:4d}] action_idx={idx}/{len(chunk)}")
@@ -762,11 +807,14 @@ def model_inference(args, config, ros_operator):
                 if key == " ":
                     result = handle_interactive_mode(task_time)
                     if result == "reset":
+                        recorder.save_episode()
+                        episode_closed = True
                         ros_operator.puppet_arm_publish_continuous(left0, right0)
                         input("Press enter to continue")
                         task_time = time.time()
                         break
                     elif result == "quit":
+                        recorder.save_episode()
                         return
 
                 # Re-plan when chunk exhausted
@@ -785,6 +833,13 @@ def model_inference(args, config, ros_operator):
                 if front is not None:
                     ranker.update_obs(front)
 
+                observation_to_save = (
+                    get_rollout_observation(args, config, ros_operator)
+                    if recorder.enabled else None
+                )
+                if recorder.enabled and observation_to_save is None:
+                    break
+
                 # Execute
                 if args.ctrl_type == "joint":
                     la, ra = process_action(config["task"], act)
@@ -799,9 +854,17 @@ def model_inference(args, config, ros_operator):
                 if args.use_robot_base:
                     ros_operator.robot_base_publish(act[14:16])
 
+                action_to_save = np.concatenate((la, ra), axis=0)
+                recorder.add_step(observation_to_save, action_to_save)
+
                 t += 1
                 last_act = act
                 rate.sleep()
+
+            if not episode_closed:
+                recorder.save_episode()
+            if shutdown_event.is_set():
+                return
 
     finally:
         ros_operator.puppet_arm_publish_continuous(left0, right0)
@@ -823,18 +886,22 @@ def get_arguments():
     p.add_argument("--img_front_depth_topic", default="/camera_f/depth/image_raw")
     p.add_argument("--img_left_depth_topic", default="/camera_l/depth/image_raw")
     p.add_argument("--img_right_depth_topic", default="/camera_r/depth/image_raw")
-    p.add_argument("--puppet_arm_left_cmd_topic", default="/master/joint_left")
-    p.add_argument("--puppet_arm_right_cmd_topic", default="/master/joint_right")
+    p.add_argument("--master_arm_left_topic", default="/master/joint_left")
+    p.add_argument("--master_arm_right_topic", default="/master/joint_right")
     p.add_argument("--puppet_arm_left_topic", default="/puppet/joint_left")
     p.add_argument("--puppet_arm_right_topic", default="/puppet/joint_right")
-    p.add_argument("--endpose_left_cmd_topic", default="/puppet/pos_cmd_left")
-    p.add_argument("--endpose_right_cmd_topic", default="/puppet/pos_cmd_right")
-    p.add_argument("--endpose_left_topic", default="/puppet/end_pose_left")
-    p.add_argument("--endpose_right_topic", default="/puppet/end_pose_right")
+    p.add_argument("--pos_cmd_left_topic", default="/puppet/pos_cmd_left")
+    p.add_argument("--pos_cmd_right_topic", default="/puppet/pos_cmd_right")
+    p.add_argument("--puppet_arm_left_pose_topic", default="/puppet/end_pose_euler_left")
+    p.add_argument("--puppet_arm_right_pose_topic", default="/puppet/end_pose_euler_right")
     p.add_argument("--robot_base_topic", default="/odom_raw")
     p.add_argument("--robot_base_cmd_topic", default="/cmd_vel")
     p.add_argument("--use_robot_base", action="store_true", default=False)
     p.add_argument("--use_depth_image", action="store_true", default=False)
+    p.add_argument("--save_rollout", action="store_true", default=False,
+                   help="Save rollout observations/actions to HDF5 episodes")
+    p.add_argument("--save_dir", type=str, default="/home/sail/data_rollout",
+                   help="Directory used when --save_rollout is set")
 
     # Robot control
     p.add_argument("--publish_rate", type=int, default=30)
@@ -843,8 +910,7 @@ def get_arguments():
                    default=[0.03, 0.03, 0.03, 0.03, 0.03, 0.03, 0.2])
     p.add_argument("--ctrl_type", choices=["joint", "eef", "ee6d"], default="joint")
     p.add_argument("--task", required=True,
-                   choices=["towel", "rubbish", "tissue", "beverage",
-                            "play_pp", "pick_pp", "react"])
+                   help="Task name; must be a key in task_configs.yaml")
     p.add_argument("--exec_horizon", type=int, default=25)
 
     # pi05 policy server
@@ -872,7 +938,7 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
     args = get_arguments()
-    ros_operator = RosOperator(args)
+    ros_operator = RosOperator(args, mode="inference")
     config = get_config(args)
 
     signal.signal(signal.SIGINT, _on_sigint)

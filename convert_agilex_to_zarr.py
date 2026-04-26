@@ -62,8 +62,8 @@ def read_video_frames(video_path: str, img_size: int) -> np.ndarray:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir", required=True,
-                        help="Path to fold_towel_0109_agilex dataset")
+    parser.add_argument("--dataset_dir", required=True, nargs="+",
+                        help="One or more LeRobot dataset dirs to concatenate")
     parser.add_argument("--output_path", required=True,
                         help="Output zarr path")
     parser.add_argument("--camera", default="cam_high",
@@ -72,27 +72,58 @@ def main():
     parser.add_argument("--img_size", type=int, default=96,
                         help="Resize images to this resolution")
     parser.add_argument("--max_episodes", type=int, default=None,
-                        help="Limit number of episodes (default: all)")
+                        help="Limit number of episodes per dataset (default: all)")
+    parser.add_argument("--success_only", action="store_true",
+                        help="Keep only episodes with success=true in meta/episodes.jsonl")
     args = parser.parse_args()
 
-    dataset_dir = Path(args.dataset_dir)
     camera_key = f"observation.images.{args.camera}"
 
-    # Discover episodes
-    parquet_dir = dataset_dir / "data" / "chunk-000"
-    video_dir = dataset_dir / "videos" / "chunk-000" / camera_key
+    # Discover episodes across all dataset dirs.
+    # Each entry is (parquet_path, video_path) so video lookup survives the merge.
+    episode_entries = []
+    for ds in args.dataset_dir:
+        ds_path = Path(ds)
+        parquet_dir = ds_path / "data" / "chunk-000"
+        video_dir = ds_path / "videos" / "chunk-000" / camera_key
 
-    parquet_files = sorted(parquet_dir.glob("episode_*.parquet"))
-    if args.max_episodes:
-        parquet_files = parquet_files[:args.max_episodes]
+        success_set = None
+        if args.success_only:
+            ep_jsonl = ds_path / "meta" / "episodes.jsonl"
+            if not ep_jsonl.exists():
+                raise FileNotFoundError(f"--success_only requires {ep_jsonl}")
+            success_set = set()
+            missing_field = 0
+            with open(ep_jsonl) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    if "success" not in rec:
+                        missing_field += 1
+                        continue
+                    if rec["success"]:
+                        success_set.add(int(rec["episode_index"]))
+            if missing_field:
+                print(f"  {ds}: warning, {missing_field} episodes lack 'success' field, skipped")
 
-    num_episodes = len(parquet_files)
-    print(f"Found {num_episodes} episodes")
+        pfs = sorted(parquet_dir.glob("episode_*.parquet"))
+        if success_set is not None:
+            pfs = [pf for pf in pfs if int(pf.stem.split("_")[-1]) in success_set]
+        if args.max_episodes:
+            pfs = pfs[:args.max_episodes]
+        print(f"  {ds}: {len(pfs)} episodes" + (" (success only)" if args.success_only else ""))
+        for pf in pfs:
+            episode_entries.append((pf, video_dir / f"{pf.stem}.mp4"))
+
+    num_episodes = len(episode_entries)
+    print(f"Found {num_episodes} episodes total across {len(args.dataset_dir)} dataset(s)")
 
     # First pass: count total frames
     total_frames = 0
     episode_lengths = []
-    for pf in parquet_files:
+    for pf, _ in episode_entries:
         df = pd.read_parquet(pf)
         episode_lengths.append(len(df))
         total_frames += len(df)
@@ -100,24 +131,24 @@ def main():
     print(f"Total frames: {total_frames}")
 
     # Allocate zarr arrays
-    store = zarr.DirectoryStore(args.output_path)
+    store = zarr.storage.LocalStore(args.output_path)
     root = zarr.group(store=store, overwrite=True)
     data_group = root.create_group("data")
     meta_group = root.create_group("meta")
 
-    img_arr = data_group.create_dataset(
+    img_arr = data_group.create_array(
         "img",
         shape=(total_frames, args.img_size, args.img_size, 3),
         dtype=np.uint8,
         chunks=(256, args.img_size, args.img_size, 3),
     )
-    action_arr = data_group.create_dataset(
+    action_arr = data_group.create_array(
         "action",
         shape=(total_frames, 14),
         dtype=np.float32,
         chunks=(256, 14),
     )
-    state_arr = data_group.create_dataset(
+    state_arr = data_group.create_array(
         "state",
         shape=(total_frames, 14),
         dtype=np.float32,
@@ -128,9 +159,8 @@ def main():
     episode_ends = []
     offset = 0
 
-    for ep_idx, pf in enumerate(parquet_files):
+    for ep_idx, (pf, video_path) in enumerate(episode_entries):
         ep_name = pf.stem  # e.g. episode_000042
-        video_path = video_dir / f"{ep_name}.mp4"
 
         # Read parquet
         df = pd.read_parquet(pf)
@@ -167,11 +197,13 @@ def main():
     # Trim if some episodes were skipped
     if offset < total_frames:
         print(f"Trimming arrays from {total_frames} to {offset} frames")
-        img_arr.resize(offset, args.img_size, args.img_size, 3)
-        action_arr.resize(offset, 14)
-        state_arr.resize(offset, 14)
+        img_arr.resize((offset, args.img_size, args.img_size, 3))
+        action_arr.resize((offset, 14))
+        state_arr.resize((offset, 14))
 
-    meta_group.create_dataset("episode_ends", data=np.array(episode_ends, dtype=np.int64))
+    ep_ends_arr = np.array(episode_ends, dtype=np.int64)
+    meta_group.create_array("episode_ends", shape=ep_ends_arr.shape, dtype=ep_ends_arr.dtype)
+    meta_group["episode_ends"][:] = ep_ends_arr
 
     # Also save action stats for normalization
     all_actions = action_arr[:]

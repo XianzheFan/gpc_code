@@ -18,7 +18,7 @@ models_save_dir: checkpoints/agilex_pnp_cup_wm_phase_one
 # Training
 num_epochs: 300
 batch_size: 16
-lr: 0.0001
+lr: 0.0002
 save_every: 10
 num_workers: 4
 

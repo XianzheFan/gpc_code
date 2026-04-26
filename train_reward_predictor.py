@@ -104,7 +104,7 @@ class RewardPredictorDataset(Dataset):
             (e.g. fractal20220817) where the success label is missing or wrong.
     """
 
-    def __init__(self, dataset_dir: str, robot_type: str, img_size: int = 96,
+    def __init__(self, dataset_dir, robot_type: str, img_size: int = 96,
                  treat_all_success: bool = False):
         self.img_size = img_size
         self.transform = v2.Compose([
@@ -115,51 +115,57 @@ class RewardPredictorDataset(Dataset):
         ])
 
         camera_key = CAMERA_KEY[robot_type]
-        dataset_path = Path(dataset_dir)
+        dataset_dirs = [dataset_dir] if isinstance(dataset_dir, str) else list(dataset_dir)
 
-        # Discover all episodes
+        # Discover all episodes across one or more dataset dirs
         self.samples = []  # list of (video_path, frame_idx, label)
-
-        data_root = dataset_path / "data"
-        video_root = dataset_path / "videos"
-
         n_success, n_fail = 0, 0
-        for chunk_dir in sorted(data_root.glob("chunk-*")):
-            chunk_name = chunk_dir.name
-            for pq_path in sorted(chunk_dir.glob("episode_*.parquet")):
-                ep_name = pq_path.stem
-                vid_path = video_root / chunk_name / camera_key / f"{ep_name}.mp4"
 
-                if not vid_path.exists():
-                    continue
+        for d in dataset_dirs:
+            dataset_path = Path(d)
+            data_root = dataset_path / "data"
+            video_root = dataset_path / "videos"
+            n_before = len(self.samples)
 
-                df = pd.read_parquet(pq_path)
-                n = len(df)
-                if n == 0:
-                    continue
+            for chunk_dir in sorted(data_root.glob("chunk-*")):
+                chunk_name = chunk_dir.name
+                for pq_path in sorted(chunk_dir.glob("episode_*.parquet")):
+                    ep_name = pq_path.stem
+                    vid_path = video_root / chunk_name / camera_key / f"{ep_name}.mp4"
 
-                # Determine success
-                if treat_all_success:
-                    success = True
-                elif "success" in df.columns:
-                    success = bool(df["success"].iloc[-1])
-                else:
-                    success = True
+                    if not vid_path.exists():
+                        continue
 
-                if success:
-                    n_success += 1
-                else:
-                    n_fail += 1
+                    df = pd.read_parquet(pq_path)
+                    n = len(df)
+                    if n == 0:
+                        continue
 
-                # Compute per-frame cost labels
-                for t in range(n):
-                    if success:
-                        label = (n - 1 - t) / max(n - 1, 1)  # 1.0 -> 0.0
+                    # Determine success
+                    if treat_all_success:
+                        success = True
+                    elif "success" in df.columns:
+                        success = bool(df["success"].iloc[-1])
                     else:
-                        label = 1.0
-                    self.samples.append((str(vid_path), t, label))
+                        success = True
 
-        print(f"RewardPredictorDataset: {len(self.samples)} samples from {dataset_dir}")
+                    if success:
+                        n_success += 1
+                    else:
+                        n_fail += 1
+
+                    # Compute per-frame cost labels
+                    for t in range(n):
+                        if success:
+                            label = (n - 1 - t) / max(n - 1, 1)  # 1.0 -> 0.0
+                        else:
+                            label = 1.0
+                        self.samples.append((str(vid_path), t, label))
+
+            print(f"  [{d}] +{len(self.samples) - n_before} samples")
+
+        print(f"RewardPredictorDataset: {len(self.samples)} samples total "
+              f"from {len(dataset_dirs)} dir(s)")
         print(f"  Episodes: {n_success} success, {n_fail} fail "
               f"(treat_all_success={treat_all_success})")
 
@@ -242,24 +248,27 @@ class RewardPredictorDatasetPreloaded(Dataset):
     Uses multiprocessing to decode videos in parallel for ~Nx speedup.
     """
 
-    def __init__(self, dataset_dir: str, robot_type: str, img_size: int = 96,
+    def __init__(self, dataset_dir, robot_type: str, img_size: int = 96,
                  treat_all_success: bool = False, num_load_workers: int = 0):
         self.img_size = img_size
 
         camera_key = CAMERA_KEY[robot_type]
-        dataset_path = Path(dataset_dir)
-
-        data_root = dataset_path / "data"
-        video_root = dataset_path / "videos"
+        dataset_dirs = [dataset_dir] if isinstance(dataset_dir, str) else list(dataset_dir)
 
         episodes = []
-        for chunk_dir in sorted(data_root.glob("chunk-*")):
-            chunk_name = chunk_dir.name
-            for pq_path in sorted(chunk_dir.glob("episode_*.parquet")):
-                ep_name = pq_path.stem
-                vid_path = video_root / chunk_name / camera_key / f"{ep_name}.mp4"
-                if vid_path.exists():
-                    episodes.append((str(pq_path), str(vid_path)))
+        for d in dataset_dirs:
+            dataset_path = Path(d)
+            data_root = dataset_path / "data"
+            video_root = dataset_path / "videos"
+            n_before = len(episodes)
+            for chunk_dir in sorted(data_root.glob("chunk-*")):
+                chunk_name = chunk_dir.name
+                for pq_path in sorted(chunk_dir.glob("episode_*.parquet")):
+                    ep_name = pq_path.stem
+                    vid_path = video_root / chunk_name / camera_key / f"{ep_name}.mp4"
+                    if vid_path.exists():
+                        episodes.append((str(pq_path), str(vid_path)))
+            print(f"  [{d}] +{len(episodes) - n_before} episodes")
 
         work_args = [(pq, vid, treat_all_success, img_size)
                      for pq, vid in episodes]
@@ -496,9 +505,11 @@ def main():
         description="Train GPC-RANK reward predictor for SimplerEnv")
 
     # Data
-    parser.add_argument("--dataset_dir", required=True,
-                        help="LeRobot dataset dir (from collect_finetune_dreamdojo_data.py "
-                             "or fractal20220817_data_dreamdojo / lerobot)")
+    parser.add_argument("--dataset_dir", required=True, nargs="+",
+                        help="One or more LeRobot dataset dirs (from "
+                             "collect_finetune_dreamdojo_data.py or "
+                             "fractal20220817_data_dreamdojo / lerobot). "
+                             "Pass multiple paths separated by spaces to combine datasets.")
     parser.add_argument("--robot_type", required=True, choices=["google", "widowx", "agilex"])
     parser.add_argument("--img_size", type=int, default=96,
                         help="Image resolution (must match world model, default: 96)")

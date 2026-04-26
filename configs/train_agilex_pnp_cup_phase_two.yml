@@ -10,7 +10,7 @@ models_save_dir: checkpoints/agilex_pnp_cup_wm_phase_two
 phase_one_checkpoint: checkpoints/agilex_pnp_cup_wm_phase_one/epoch_300/denoiser.pth
 
 # Training
-num_epochs: 300
+num_epochs: 100
 batch_size: 8              # Smaller batch for longer sequences
 lr: 0.0001
 save_every: 10
@@ -35,5 +35,5 @@ sigma_data: 0.5
 sigma_offset_noise: 0.1
 noise_previous_obs: true
 
-wandb: false
+wandb: true
 run_name: agilex_pnp_cup_wm_phase2
