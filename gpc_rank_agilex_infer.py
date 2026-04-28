@@ -51,9 +51,10 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(_THIS_DIR, '..', 'openpi', 'agilex'))
 from clients import OpenpiClient
 from agilex_utils import (InferenceDataRecorder, check_keyboard_input,
-                           get_config, handle_interactive_mode, process_action)
-from ros_operator import (RosOperator, get_latest_ros_observation,
-                           get_ros_observation)
+                           get_config, get_inference_observation,
+                           get_rollout_observation, handle_interactive_mode,
+                           process_action)
+from ros_operator import RosOperator
 from scipy.spatial.transform import Rotation as _R
 
 
@@ -583,63 +584,17 @@ def update_observation_window(args, config, ros_operator):
             observation_window.append({
                 "qpos": None,
                 "images": {cn: None for cn in config["camera_names"]},
-                "endpose": None,
+                "eef_pose": None,
             })
 
-    (img_front, img_left, img_right,
-     puppet_arm_left, puppet_arm_right,
-     endpose_left, endpose_right) = get_ros_observation(args, ros_operator)
-
-    qpos = np.concatenate(
-        (np.array(puppet_arm_left.position),
-         np.array(puppet_arm_right.position)), axis=0)
-
-    endpose = ros_operator.build_puppet_arm_pose(
-        endpose_left, endpose_right, puppet_arm_left, puppet_arm_right
-    )
+    observation = get_inference_observation(args, config, ros_operator)
+    if observation is None:
+        return False
 
     with observation_window_lock:
-        observation_window.append({
-            "qpos": qpos,
-            "images": {
-                config["camera_names"][0]: img_front,
-                config["camera_names"][1]: img_right,
-                config["camera_names"][2]: img_left,
-            },
-            "endpose": endpose,
-        })
+        observation_window.append(observation)
 
-
-def get_rollout_observation(args, config, ros_operator):
-    """Fetch the latest ROS frame and pack it into the dict format expected
-    by InferenceDataRecorder / save_inference_data (qpos, eef_pose, images).
-    Uses the non-blocking latest-frame getter so it does not stall publishing.
-    """
-    observation = get_latest_ros_observation(args, ros_operator)
-    if observation is None:
-        return None
-
-    (img_front, img_left, img_right,
-     puppet_arm_left, puppet_arm_right,
-     endpose_left, endpose_right) = observation
-
-    qpos = np.concatenate(
-        (np.array(puppet_arm_left.position),
-         np.array(puppet_arm_right.position)), axis=0)
-
-    eef_pose = ros_operator.build_puppet_arm_pose(
-        endpose_left, endpose_right, puppet_arm_left, puppet_arm_right
-    )
-
-    return {
-        "qpos": qpos,
-        "eef_pose": eef_pose,
-        "images": {
-            config["camera_names"][0]: img_front,
-            config["camera_names"][1]: img_right,
-            config["camera_names"][2]: img_left,
-        },
-    }
+    return True
 
 
 def _get_obs_and_state(args, config):
@@ -648,7 +603,7 @@ def _get_obs_and_state(args, config):
         if args.ctrl_type in ("joint", "ee6d"):
             state = observation_window[-1]["qpos"]
         elif args.ctrl_type == "eef":
-            state = observation_window[-1]["endpose"]
+            state = observation_window[-1]["eef_pose"]
         else:
             raise ValueError(f"Unknown ctrl_type: {args.ctrl_type}")
     return imgs, state
@@ -666,7 +621,8 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
       3. Rank via world model
       4. Return best action chunk
     """
-    update_observation_window(args, config, ros_operator)
+    if not update_observation_window(args, config, ros_operator):
+        return None, None
     imgs, state = _get_obs_and_state(args, config)
 
     # Push front-camera into world-model history
@@ -674,7 +630,7 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
         ranker.update_obs(imgs[0])
 
     payload = {
-        "top": imgs[0], "right": imgs[1], "left": imgs[2],
+        "top": imgs[0], "left": imgs[1], "right": imgs[2],
         "instruction": config["language_instruction"],
         "state": state, "action_prefix": None, "delay": None,
     }
@@ -719,6 +675,7 @@ def model_inference(args, config, ros_operator):
     # -- world model --
     wm = yaml.safe_load(open(args.gpc_config))
     action_dim = wm.get("action_dim", 14)
+    config["spread_factor"] = wm.get("spread_factor", 1.01)
 
     dcfg = DenoiserConfig(
         img_channels=3,
@@ -776,14 +733,14 @@ def model_inference(args, config, ros_operator):
     left0, right0 = config["left0"], config["right0"]
     print(config)
 
-    ros_operator.puppet_arm_publish_continuous(left0, right0)
+    ros_operator.follower_arm_publish_continuous(left0, right0)
     print("Warmup pi05 server...")
     policy.warmup(rtc=False, streaming=False)
     print("Server warmed up")
 
     input("Press enter to start")
     task_time = time.time()
-    ros_operator.puppet_arm_publish_continuous(left0, right0)
+    ros_operator.follower_arm_publish_continuous(left0, right0)
     recorder = InferenceDataRecorder(args, config, shutdown_event=shutdown_event)
 
     try:
@@ -796,6 +753,8 @@ def model_inference(args, config, ros_operator):
 
             # First GPC-RANK inference
             chunk, _ = gpc_rank_inference(args, config, policy, ranker, ros_operator)
+            if chunk is None:
+                break
             idx = 0
             last_act = None
             episode_closed = False
@@ -809,7 +768,7 @@ def model_inference(args, config, ros_operator):
                     if result == "reset":
                         recorder.save_episode()
                         episode_closed = True
-                        ros_operator.puppet_arm_publish_continuous(left0, right0)
+                        ros_operator.follower_arm_publish_continuous(left0, right0)
                         input("Press enter to continue")
                         task_time = time.time()
                         break
@@ -820,6 +779,8 @@ def model_inference(args, config, ros_operator):
                 # Re-plan when chunk exhausted
                 if idx >= len(chunk):
                     chunk, _ = gpc_rank_inference(args, config, policy, ranker, ros_operator)
+                    if chunk is None:
+                        break
                     idx = 0
 
                 act = chunk[idx]
@@ -827,7 +788,8 @@ def model_inference(args, config, ros_operator):
 
                 # Update histories
                 ranker.update_action(act)
-                update_observation_window(args, config, ros_operator)
+                if not update_observation_window(args, config, ros_operator):
+                    break
                 with observation_window_lock:
                     front = observation_window[-1]["images"].get(config["camera_names"][0])
                 if front is not None:
@@ -843,13 +805,13 @@ def model_inference(args, config, ros_operator):
                 # Execute
                 if args.ctrl_type == "joint":
                     la, ra = process_action(config["task"], act)
-                    ros_operator.puppet_arm_publish(la, ra)
+                    ros_operator.follower_arm_publish(la, ra)
                 elif args.ctrl_type == "ee6d":
                     la, ra = process_action(config["task"], abs_6d_2_abs_euler(act))
-                    ros_operator.endpose_publish(la, ra)
+                    ros_operator.follower_arm_pose_publish(la, ra)
                 elif args.ctrl_type == "eef":
                     la, ra = process_action(config["task"], act)
-                    ros_operator.endpose_publish(la, ra)
+                    ros_operator.follower_arm_pose_publish(la, ra)
 
                 if args.use_robot_base:
                     ros_operator.robot_base_publish(act[14:16])
@@ -867,7 +829,7 @@ def model_inference(args, config, ros_operator):
                 return
 
     finally:
-        ros_operator.puppet_arm_publish_continuous(left0, right0)
+        ros_operator.follower_arm_publish_continuous(left0, right0)
 
 
 ###############################################################################
@@ -886,14 +848,14 @@ def get_arguments():
     p.add_argument("--img_front_depth_topic", default="/camera_f/depth/image_raw")
     p.add_argument("--img_left_depth_topic", default="/camera_l/depth/image_raw")
     p.add_argument("--img_right_depth_topic", default="/camera_r/depth/image_raw")
-    p.add_argument("--master_arm_left_topic", default="/master/joint_left")
-    p.add_argument("--master_arm_right_topic", default="/master/joint_right")
-    p.add_argument("--puppet_arm_left_topic", default="/puppet/joint_left")
-    p.add_argument("--puppet_arm_right_topic", default="/puppet/joint_right")
-    p.add_argument("--pos_cmd_left_topic", default="/puppet/pos_cmd_left")
-    p.add_argument("--pos_cmd_right_topic", default="/puppet/pos_cmd_right")
-    p.add_argument("--puppet_arm_left_pose_topic", default="/puppet/end_pose_euler_left")
-    p.add_argument("--puppet_arm_right_pose_topic", default="/puppet/end_pose_euler_right")
+    p.add_argument("--leader_arm_left_topic", default="/leader/joint_left")
+    p.add_argument("--leader_arm_right_topic", default="/leader/joint_right")
+    p.add_argument("--follower_arm_left_topic", default="/follower/joint_left")
+    p.add_argument("--follower_arm_right_topic", default="/follower/joint_right")
+    p.add_argument("--pos_cmd_left_topic", default="/follower/pos_cmd_left")
+    p.add_argument("--pos_cmd_right_topic", default="/follower/pos_cmd_right")
+    p.add_argument("--follower_arm_left_pose_topic", default="/follower/end_pose_euler_left")
+    p.add_argument("--follower_arm_right_pose_topic", default="/follower/end_pose_euler_right")
     p.add_argument("--robot_base_topic", default="/odom_raw")
     p.add_argument("--robot_base_cmd_topic", default="/cmd_vel")
     p.add_argument("--use_robot_base", action="store_true", default=False)
