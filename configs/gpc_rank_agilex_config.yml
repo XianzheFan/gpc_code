@@ -32,4 +32,4 @@ sampler_sigma_max: 5
 reward_output_dim: 1            # scalar task-completion score (lower = better)
 
 # --- GPC-RANK inference ---
-spread_factor: 1.01             # spread candidates around mean (from original paper)
+spread_factor: 2.5              # spread candidates around mean (>1 amplifies diversity)

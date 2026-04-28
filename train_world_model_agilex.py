@@ -522,8 +522,10 @@ def main():
 
     num_epochs = cfg["num_epochs"]
     save_dir = cfg["models_save_dir"]
+    start_epoch = cfg.get("start_epoch", 0)
 
-    pbar = tqdm(range(1, num_epochs + 1), desc="Epoch") if rank == 0 else range(1, num_epochs + 1)
+    epoch_range = range(start_epoch + 1, num_epochs + 1)
+    pbar = tqdm(epoch_range, desc="Epoch", initial=start_epoch, total=num_epochs) if rank == 0 else epoch_range
     for epoch in pbar:
         if distributed:
             sampler.set_epoch(epoch)

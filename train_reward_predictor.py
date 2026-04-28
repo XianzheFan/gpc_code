@@ -30,7 +30,7 @@ Usage (Agilex real-robot):
     torchrun --nproc_per_node=8 train_reward_predictor.py \
         --dataset_dir ../openpi/data/pnp_cup_0415 \
         --robot_type agilex \
-        --save_dir checkpoints/reward_predictor_agilex_pnp_cup \
+        --save_dir checkpoints/reward_predictor_pnp_cup \
         --pretrained_backbone \
         --num_epochs 100
 """

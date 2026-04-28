@@ -1,13 +1,13 @@
 # =============================================================================
-# Phase 2: Multi-step finetuning on Agilex data
+# Phase 2: Multi-step finetuning on Agilex plug data
 # =============================================================================
 # Requires Phase 1 checkpoint.
-#   python train_world_model_agilex.py --config configs/train_agilex_phase_two.yml
+#   python train_world_model_agilex.py --config configs/train_agilex_plug_phase_two.yml
 # =============================================================================
 
-dataset_path: data/agilex_pnp_cup.zarr
-models_save_dir: checkpoints/pnp_cup_wm_phase_two
-phase_one_checkpoint: checkpoints/pnp_cup_wm_phase_one/epoch_300/denoiser.pth
+dataset_path: data/agilex_plug.zarr
+models_save_dir: checkpoints/plug_wm_phase_two
+phase_one_checkpoint: checkpoints/plug_wm_phase_one/epoch_300/denoiser.pth
 
 # Training
 num_epochs: 100
@@ -36,4 +36,4 @@ sigma_offset_noise: 0.1
 noise_previous_obs: true
 
 wandb: true
-run_name: pnp_cup_wm_phase2
+run_name: plug_wm_phase2

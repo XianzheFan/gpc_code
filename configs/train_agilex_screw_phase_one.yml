@@ -1,19 +1,19 @@
 # =============================================================================
-# Phase 1: Single-step warmup training on Agilex data
+# Phase 1: Single-step warmup training on Agilex screw data
 # =============================================================================
 # First convert dataset:
 #   python convert_agilex_to_zarr.py \
-#       --dataset_dir ../DreamDojo/datasets/fold_towel_0109_agilex \
-#       --output_path data/agilex_fold_towel.zarr
+#       --dataset_dir <path-to-agilex-screw-dataset> \
+#       --output_path data/agilex_screw.zarr
 # Then train:
-#   python train_world_model_agilex.py --config configs/train_agilex_phase_one.yml
+#   python train_world_model_agilex.py --config configs/train_agilex_screw_phase_one.yml
 # =============================================================================
 
-dataset_path: data/agilex_pnp_cup.zarr
-models_save_dir: checkpoints/pnp_cup_wm_phase_one
+dataset_path: data/agilex_screw.zarr
+models_save_dir: checkpoints/screw_wm_phase_one
 
 # Use stats from conversion (optional, auto-computed if omitted)
-# action_stats_path: data/agilex_pnp_cup_stats.npy
+# action_stats_path: data/agilex_screw_stats.npy
 
 # Training
 num_epochs: 300
@@ -42,4 +42,4 @@ sigma_offset_noise: 0.1
 noise_previous_obs: true
 
 wandb: false
-run_name: pnp_cup_wm_phase1
+run_name: screw_wm_phase1

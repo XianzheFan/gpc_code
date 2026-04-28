@@ -1,0 +1,33 @@
+# Resume phase-one from epoch_190. Loads denoiser weights (optimizer state resets).
+# start_epoch: 190 + num_epochs: 300 -> loop runs 191..300, saves epoch_200..epoch_300
+# back into the original dir so phase 2 can point to epoch_300/denoiser.pth.
+
+dataset_path: data/agilex_pnp_cup.zarr
+models_save_dir: checkpoints/pnp_cup_wm_phase_one
+phase_one_checkpoint: checkpoints/pnp_cup_wm_phase_one/epoch_190/denoiser.pth
+
+start_epoch: 190
+num_epochs: 300
+batch_size: 16
+lr: 0.0002
+save_every: 10
+num_workers: 4
+
+pred_horizon: 5
+obs_horizon: 2
+action_horizon: 5
+
+action_dim: 14
+num_steps_conditioning: 4
+cond_channels: 256
+depths: [2, 2, 2, 2]
+channels: [96, 96, 96, 96]
+attn_depths: [0, 0, 1, 1]
+resize_scale: 96
+
+sigma_data: 0.5
+sigma_offset_noise: 0.1
+noise_previous_obs: true
+
+wandb: false
+run_name: pnp_cup_wm_phase1_resume
