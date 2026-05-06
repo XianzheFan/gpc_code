@@ -691,7 +691,7 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
         f"reward_pred={lat['reward_ms']:.1f}ms  "
         f"best={best_idx}  score={scores[best_idx]:.4f}"
     )
-    print(msg, flush=True)
+    print(f"\033[33m{msg}\033[0m", flush=True)
     logging.info(msg)
     return trimmed[best_idx], scores
 
