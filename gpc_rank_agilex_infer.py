@@ -501,16 +501,19 @@ class GPCRankSelector:
         return (2.0 * (a - lo) / (hi - lo + 1e-8) - 1.0).astype(np.float32)
 
     @torch.no_grad()
-    def rank(self, candidates: List[np.ndarray]) -> Tuple[int, List[float]]:
+    def rank(self, candidates: List[np.ndarray]) -> Tuple[int, List[float], dict]:
         """
         Rank candidates (each shape (T, action_dim)) via world-model rollout.
-        Returns (best_idx, per-candidate scores).
+        Returns (best_idx, per-candidate scores, latency dict in ms).
         """
         N = len(candidates)
         n = self.n_cond
+        latency = {"wm_rollout_ms": 0.0, "wm_per_step_ms": 0.0,
+                   "reward_ms": 0.0, "rollout_steps": 0,
+                   "num_candidates": N}
 
         if len(self.obs_history) < n:
-            return 0, [0.0] * N
+            return 0, [0.0] * N, latency
 
         # -- conditioning frames: (N, n, 3, H, W) --
         frames = torch.tensor(np.stack(self.obs_history[-n:]),
@@ -533,21 +536,43 @@ class GPCRankSelector:
             for c in candidates
         ])  # (N, rollout, action_dim)
 
-        # -- autoregressive rollout --
+        # -- autoregressive rollout (timed) --
         pred = frames.clone()    # (N, n, 3, H, W)
         acts = act_t.clone()     # (N, n, action_dim)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t_wm_start = time.perf_counter()
 
         for s in range(rollout):
             next_frame = self.sampler.sample(pred[:, -n:], acts[:, -n:])  # (N, 3, H, W)
             pred = torch.cat([pred, next_frame.unsqueeze(1)], dim=1)
             acts = torch.cat([acts, cand[:, s:s+1]], dim=1)
 
-        # -- score final frames --
-        final = (pred[:, -1] + 1.0) / 2.0   # (N, 3, H, W) in [0,1]
-        scores = self.reward_predictor(final).squeeze(-1).cpu().numpy()
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t_wm_end = time.perf_counter()
+        latency["wm_rollout_ms"] = (t_wm_end - t_wm_start) * 1000
+        latency["rollout_steps"] = rollout
+        latency["wm_per_step_ms"] = latency["wm_rollout_ms"] / max(rollout, 1)
 
+        # -- score final frames (timed) --
+        final = (pred[:, -1] + 1.0) / 2.0   # (N, 3, H, W) in [0,1]
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t_rp_start = time.perf_counter()
+
+        scores_t = self.reward_predictor(final).squeeze(-1)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        t_rp_end = time.perf_counter()
+        latency["reward_ms"] = (t_rp_end - t_rp_start) * 1000
+
+        scores = scores_t.cpu().numpy()
         best = int(np.argmin(scores))
-        return best, scores.tolist()
+        return best, scores.tolist(), latency
 
 
 ###############################################################################
@@ -652,13 +677,18 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
     arr = mean + spread * (arr - mean)
     trimmed = [arr[i] for i in range(len(candidates))]
 
-    # Step 2: rank
+    # Step 2: rank (world-model rollout + reward predictor)
     t1 = time.perf_counter()
-    best_idx, scores = ranker.rank(trimmed)
+    best_idx, scores, lat = ranker.rank(trimmed)
     t_rank = (time.perf_counter() - t1) * 1000
 
     logging.info(
-        f"[GPC-RANK] sample={t_sample:.0f}ms  rank={t_rank:.0f}ms  "
+        f"[GPC-RANK latency] pi05_sample={t_sample:.1f}ms  "
+        f"rank_total={t_rank:.1f}ms  "
+        f"wm_rollout={lat['wm_rollout_ms']:.1f}ms "
+        f"({lat['rollout_steps']} steps x N={lat['num_candidates']}, "
+        f"per_step={lat['wm_per_step_ms']:.1f}ms)  "
+        f"reward_pred={lat['reward_ms']:.1f}ms  "
         f"best={best_idx}  score={scores[best_idx]:.4f}"
     )
     return trimmed[best_idx], scores
