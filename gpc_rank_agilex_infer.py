@@ -682,7 +682,7 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
     best_idx, scores, lat = ranker.rank(trimmed)
     t_rank = (time.perf_counter() - t1) * 1000
 
-    logging.info(
+    msg = (
         f"[GPC-RANK latency] pi05_sample={t_sample:.1f}ms  "
         f"rank_total={t_rank:.1f}ms  "
         f"wm_rollout={lat['wm_rollout_ms']:.1f}ms "
@@ -691,6 +691,8 @@ def gpc_rank_inference(args, config, policy, ranker: GPCRankSelector, ros_operat
         f"reward_pred={lat['reward_ms']:.1f}ms  "
         f"best={best_idx}  score={scores[best_idx]:.4f}"
     )
+    print(msg, flush=True)
+    logging.info(msg)
     return trimmed[best_idx], scores
 
 
